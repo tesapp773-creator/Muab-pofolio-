@@ -22,8 +22,8 @@ export default function ToolsPage() {
                   href={`/tools/${tool.slug}`}
                   className="rounded-2xl border border-surface-muted bg-white p-4 shadow-card transition hover:border-brand-200"
                 >
-                  <h3 className="text-sm font-semibold text-gray-900">{tool.title}</h3
-                  ><p className="mt-1 text-sm text-gray-500">{tool.description}</p>
+                  <h3 className="text-sm font-semibold text-gray-900">{tool.title}</h3>
+                  <p className="mt-1 text-sm text-gray-500">{tool.description}</p>
                 </Link>
               ))}
             </div>
