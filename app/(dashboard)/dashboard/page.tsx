@@ -2,23 +2,39 @@ import Link from 'next/link';
 import { createClient } from '@/lib/supabase/server';
 import { ChatIcon, ToolsIcon } from '@/components/dashboard/icons';
 
+interface ProfileSummary {
+  full_name: string | null;
+  business_name: string | null;
+  plan: 'free' | 'pro' | 'business';
+}
+
+interface RecentConversation {
+  id: string;
+  title: string;
+  updated_at: string;
+}
+
 export default async function OverviewPage() {
   const supabase = createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const [{ data: profile }, { count: conversationCount }, { count: savedCount }, { data: recentConversations }] =
-    await Promise.all([
-      supabase.from('profiles').select('full_name, business_name, plan').eq('id', user!.id).single(),
-      supabase.from('conversations').select('id', { count: 'exact', head: true }),
-      supabase.from('saved_outputs').select('id', { count: 'exact', head: true }),
-      supabase
-        .from('conversations')
-        .select('id, title, updated_at')
-        .order('updated_at', { ascending: false })
-        .limit(5),
-    ]);
+  const [profileResult, conversationCountResult, savedCountResult, recentConversationsResult] = await Promise.all([
+    supabase.from('profiles').select('full_name, business_name, plan').eq('id', user!.id).single(),
+    supabase.from('conversations').select('id', { count: 'exact', head: true }),
+    supabase.from('saved_outputs').select('id', { count: 'exact', head: true }),
+    supabase
+      .from('conversations')
+      .select('id, title, updated_at')
+      .order('updated_at', { ascending: false })
+      .limit(5),
+  ]);
+
+  const profile = profileResult.data as ProfileSummary | null;
+  const conversationCount = conversationCountResult.count;
+  const savedCount = savedCountResult.count;
+  const recentConversations = recentConversationsResult.data as RecentConversation[] | null;
 
   const firstName = profile?.full_name?.split(' ')[0];
 
