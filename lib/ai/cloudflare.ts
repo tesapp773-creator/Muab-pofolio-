@@ -1,29 +1,28 @@
 import { AIProviderError, type AIProvider, type ChatMessage } from './types';
 
 /**
- * Cloudflare Workers AI, routed through Cloudflare AI Gateway.
+ * Cloudflare Workers AI, called through Cloudflare's unified AI REST API
+ * and routed via AI Gateway (for logging, caching, and rate limiting).
  *
- * Request path:
- *   this server -> https://gateway.ai.cloudflare.com/v1/{account}/{gateway}/workers-ai/{model}
+ * Endpoint: https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1/chat/completions
+ * This is Cloudflare's current OpenAI-SDK-compatible endpoint (as of mid-2026),
+ * which supersedes the older `/workers-ai/{model}` and the now-deprecated
+ * `gateway.ai.cloudflare.com/.../compat/chat/completions` path for single-model
+ * calls. Routing through a specific AI Gateway is done via the
+ * `cf-aig-gateway-id` header rather than a different base URL.
  *
  * All credentials are read from server-only env vars and are never sent to
- * the browser. If "Authenticated Gateway" is turned on for the Gateway,
- * CLOUDFLARE_AI_GATEWAY_TOKEN is additionally required and sent as
- * `cf-aig-authorization`.
+ * the browser.
  */
 export class CloudflareWorkersAIProvider implements AIProvider {
   id = 'cloudflare-workers-ai';
 
-  private get endpointBase() {
+  private get endpoint() {
     const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
-    const gatewayId = process.env.CLOUDFLARE_AI_GATEWAY_ID;
-    if (!accountId || !gatewayId) {
-      throw new AIProviderError(
-        'AI is not configured yet (missing Cloudflare account/gateway id).',
-        'config'
-      );
+    if (!accountId) {
+      throw new AIProviderError('AI is not configured yet (missing Cloudflare account id).', 'config');
     }
-    return `https://gateway.ai.cloudflare.com/v1/${accountId}/${gatewayId}/workers-ai`;
+    return `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/v1/chat/completions`;
   }
 
   private get headers(): Record<string, string> {
@@ -35,8 +34,13 @@ export class CloudflareWorkersAIProvider implements AIProvider {
       Authorization: `Bearer ${apiToken}`,
       'Content-Type': 'application/json',
     };
+    // Route through a specific AI Gateway (logging/caching/rate limits) if configured.
+    if (process.env.CLOUDFLARE_AI_GATEWAY_ID) {
+      headers['cf-aig-gateway-id'] = process.env.CLOUDFLARE_AI_GATEWAY_ID;
+    }
+    // Only relevant if that gateway has "Authenticated Gateway" turned on.
     if (process.env.CLOUDFLARE_AI_GATEWAY_TOKEN) {
-      headers['cf-aig-authorization'] = process.env.CLOUDFLARE_AI_GATEWAY_TOKEN;
+      headers['cf-aig-authorization'] = `Bearer ${process.env.CLOUDFLARE_AI_GATEWAY_TOKEN}`;
     }
     return headers;
   }
@@ -45,15 +49,15 @@ export class CloudflareWorkersAIProvider implements AIProvider {
     messages: ChatMessage[],
     opts?: { model?: string }
   ): AsyncGenerator<string, void, unknown> {
+    // Workers AI models are addressed with an "@cf/" prefix in this API.
     const model = opts?.model ?? process.env.CLOUDFLARE_AI_MODEL ?? '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
-    const url = `${this.endpointBase}/${model}`;
 
     let res: Response;
     try {
-      res = await fetch(url, {
+      res = await fetch(this.endpoint, {
         method: 'POST',
         headers: this.headers,
-        body: JSON.stringify({ messages, stream: true }),
+        body: JSON.stringify({ model, messages, stream: true }),
       });
     } catch {
       throw new AIProviderError('Could not reach the AI service. Please try again.', 'timeout');
@@ -85,7 +89,8 @@ export class CloudflareWorkersAIProvider implements AIProvider {
         if (data === '[DONE]') return;
         try {
           const parsed = JSON.parse(data);
-          const token: string | undefined = parsed.response;
+          // Standard OpenAI-compatible streaming delta shape.
+          const token: string | undefined = parsed?.choices?.[0]?.delta?.content;
           if (token) yield token;
         } catch {
           // Skip malformed SSE frames rather than failing the whole stream.
