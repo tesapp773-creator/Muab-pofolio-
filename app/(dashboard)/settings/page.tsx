@@ -3,16 +3,24 @@ import { SettingsTabs } from '@/components/settings/SettingsTabs';
 import { ProfileForm } from '@/components/settings/ProfileForm';
 import { signOut } from '@/app/(auth)/actions';
 
+interface ProfileSummary {
+  full_name: string | null;
+  business_name: string | null;
+  plan: 'free' | 'pro' | 'business';
+}
+
 export default async function SettingsPage() {
   const supabase = createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  const { data: profile } = await supabase
+  const profileResult = await supabase
     .from('profiles')
     .select('full_name, business_name, plan')
     .eq('id', user!.id)
     .single();
+
+  const profile = profileResult.data as ProfileSummary | null;
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-6 sm:px-6 sm:py-8">
